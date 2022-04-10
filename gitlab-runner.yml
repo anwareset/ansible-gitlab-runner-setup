@@ -1,0 +1,62 @@
+---
+- name: Setup gitlab-runner
+  hosts: runner
+  gather_facts: yes
+  become: yes
+  vars_files:
+    - vars/main.yml
+  tasks:
+    - name: Load platform-specific variables
+      include_vars: "{{ lookup('first_found', possible_files) }}"
+      vars:
+        possible_files:
+          files:
+            - '{{ ansible_distribution }}.yml'
+            - '{{ ansible_os_family }}.yml'
+            - 'default.yml'
+          paths:
+            - 'vars'
+    
+    - name: Install Gitlab Runner (Container)
+      import_tasks: tasks/Container.yml
+      when: gitlab_runner_container_install
+    
+    - name: Install GitLab Runner (Unix)
+      import_tasks: tasks/Unix.yml
+      when: ansible_os_family != 'Windows' and not gitlab_runner_container_install
+    
+    - name: Install GitLab Runner (Windows)
+      import_tasks: tasks/Windows.yml
+      when: ansible_os_family == 'Windows' and not gitlab_runner_container_install
+
+  handlers:
+    # non macOS
+    - name: restart_gitlab_runner
+      service: name=gitlab-runner state={{ gitlab_runner_restart_state }}
+      become: yes
+      listen: restart_gitlab_runner
+      when: ansible_os_family != 'Darwin' and ansible_os_family != 'Windows' and not gitlab_runner_container_install
+
+    # macOS
+    - name: restart_gitlab_runner_macos
+      command: "{{ gitlab_runner_executable }} restart"
+      become: "{{ gitlab_runner_system_mode }}"
+      listen: restart_gitlab_runner_macos
+      when: ansible_os_family == 'Darwin'
+
+    # Windows
+    - name: restart_gitlab_runner_windows
+      win_command: "{{ gitlab_runner_executable }} restart"
+      args:
+        chdir: "{{ gitlab_runner_config_file_location }}"
+      listen: restart_gitlab_runner_windows
+      when: ansible_os_family == 'Windows'
+
+    # Container
+    - name: restart_gitlab_runner_container
+      docker_container:
+        name: "{{ gitlab_runner_container_name }}"
+        restart: yes
+      listen: restart_gitlab_runner_container
+      when: gitlab_runner_container_install
+
